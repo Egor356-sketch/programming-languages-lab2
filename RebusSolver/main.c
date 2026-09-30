@@ -116,51 +116,50 @@ static int read_digit(const Equation* eq, const int digits[], size_t at)
     return digits[eq->index_of_letter[id]];
 }
 
-/* Проверяем полное назначение. Проверка ведущих нулей сохранена
-   как дополнительный контроль, в том числе для фиксированных цифр.
-   Длинные числа не переводим в int: складываем их десятичные цифры.
-   Элемент sum[0] хранит единицы, sum[1] десятки и так далее. */
+/* Оптимизация 2: проверяем сумму по разрядам справа налево.
+   На входе по-прежнему ПОЛНОЕ назначение цифр всем буквам.
+   При первом несовпадении разряда отвергаем вариант: старшие цифры
+   уже не могут изменить младшие. Массив для накопления суммы не нужен. */
 static int check_assignment(const Equation* eq, const int digits[])
 {
-    unsigned char sum[TEXT_LIMIT + 1] = { 0 };
-    size_t width = 1;
     const Term* right = &eq->terms[eq->term_count - 1];
+    size_t width = 0;
+    int carry = 0;
 
+    /* Дополнительная проверка ведущих нулей остаётся, в том числе
+       для уже записанных цифр. Определяем число проверяемых разрядов. */
     for (int t = 0; t < eq->term_count; ++t) {
         const Term* word = &eq->terms[t];
         if (word->length > 1 && read_digit(eq, digits, word->begin) == 0)
             return 0;
+        if (word->length > width)
+            width = word->length;
     }
 
-    /* По очереди прибавляем каждое слагаемое к накопленной сумме. */
-    for (int t = 0; t < eq->term_count - 1; ++t) {
-        const Term* word = &eq->terms[t];
-        size_t column = 0;
-        int carry = 0;
-        while (column < word->length || carry != 0) {
-            int next = (int)sum[column] + carry;
+    /* column == 0 соответствует единицам; отсутствующая цифра равна 0. */
+    for (size_t column = 0; column < width; ++column) {
+        int column_sum = carry;
+        int expected = 0;
+        for (int t = 0; t < eq->term_count - 1; ++t) {
+            const Term* word = &eq->terms[t];
             if (column < word->length) {
                 size_t at = word->begin + word->length - 1 - column;
-                next += read_digit(eq, digits, at);
+                column_sum += read_digit(eq, digits, at);
             }
-            sum[column] = (unsigned char)(next % 10);
-            carry = next / 10;
-            ++column;
         }
-        if (column > width)
-            width = column;
-    }
-    while (width > 1 && sum[width - 1] == 0)
-        --width;
-    if (width != right->length)
-        return 0;
-
-    for (size_t column = 0; column < width; ++column) {
-        size_t at = right->begin + right->length - 1 - column;
-        if ((int)sum[column] != read_digit(eq, digits, at))
+        if (column < right->length) {
+            size_t at = right->begin + right->length - 1 - column;
+            expected = read_digit(eq, digits, at);
+        }
+        if (column_sum % 10 != expected)
             return 0;
+        carry = column_sum / 10;
     }
-    return 1;
+
+    /* Ненулевой перенос после последнего разряда означает лишнюю цифру.
+       При семи слагаемых перенос может быть от 0 до 6, а не только 0 или 1.
+       column_sum не превышает 69 независимо от длины входных чисел. */
+    return carry == 0;
 }
 
 /* Перебор с возвратом без рекурсивных вызовов.
@@ -330,7 +329,7 @@ int main(int argc, char* argv[])
     int solved = 0;
     int total = (int)(sizeof(examples) / sizeof(examples[0]));
 
-    puts("RebusSolver: optimization 1, early leading-zero pruning");
+    puts("RebusSolver: optimization 2, column-wise sum check");
     printf("UNIQUE_DIGITS = %d\n\n", UNIQUE_DIGITS);
     if (argc == 2)
         return show_case(argv[1]) ? 0 : 1;

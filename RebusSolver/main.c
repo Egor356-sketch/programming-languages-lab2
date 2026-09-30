@@ -116,7 +116,8 @@ static int read_digit(const Equation* eq, const int digits[], size_t at)
     return digits[eq->index_of_letter[id]];
 }
 
-/* Проверяем только ПОЛНОЕ назначение. Раннего отсечения пока нет.
+/* Проверяем полное назначение. Проверка ведущих нулей сохранена
+   как дополнительный контроль, в том числе для фиксированных цифр.
    Длинные числа не переводим в int: складываем их десятичные цифры.
    Элемент sum[0] хранит единицы, sum[1] десятки и так далее. */
 static int check_assignment(const Equation* eq, const int digits[])
@@ -171,7 +172,19 @@ static int enumerate_assignments(const Equation* eq, int digits[],
 {
     int occupied[10] = { 0 };
     int next_digit[LETTER_LIMIT] = { 0 };
+    int nonzero[LETTER_LIMIT] = { 0 };
     int depth = 0;
+
+    /* Оптимизация 1: заранее отмечаем первые буквы многозначных чисел.
+       Им нельзя назначать 0; для однозначных чисел запрета нет.
+       Проверяем и слагаемые, и правую часть равенства. */
+    for (int t = 0; t < eq->term_count; ++t) {
+        const Term* word = &eq->terms[t];
+        int id = letter_id(eq->text[word->begin]);
+        if (word->length > 1 && id >= 0)
+            nonzero[eq->index_of_letter[id]] = 1;
+    }
+
     for (int i = 0; i < LETTER_LIMIT; ++i)
         digits[i] = -1;
     stats->nodes = 1;  /* Корень поиска: ещё ни одной назначенной буквы. */
@@ -185,6 +198,9 @@ static int enumerate_assignments(const Equation* eq, int digits[],
         }
         else {
             int candidate = next_digit[depth];
+            /* Отсекаем ведущий ноль до перебора остальных букв. */
+            if (candidate == 0 && nonzero[depth])
+                candidate = 1;
             while (candidate < 10 && UNIQUE_DIGITS && occupied[candidate])
                 ++candidate;
 
@@ -314,7 +330,7 @@ int main(int argc, char* argv[])
     int solved = 0;
     int total = (int)(sizeof(examples) / sizeof(examples[0]));
 
-    puts("RebusSolver: baseline v2, iterative assignment search");
+    puts("RebusSolver: optimization 1, early leading-zero pruning");
     printf("UNIQUE_DIGITS = %d\n\n", UNIQUE_DIGITS);
     if (argc == 2)
         return show_case(argv[1]) ? 0 : 1;

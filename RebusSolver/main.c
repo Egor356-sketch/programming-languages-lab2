@@ -9,6 +9,8 @@
 /* Ограничения реализации: латинские A..Z, цифры 0..9, сложение.
    Длина входа не больше 511 байт, включая пробелы, но без '\0'. */
 enum { TEXT_LIMIT = 512, TERM_LIMIT = 8, LETTER_LIMIT = 26 };
+/* Первые ячейки содержат значения букв, последние десять: константы 0..9. */
+enum { VALUE_LIMIT = LETTER_LIMIT + 10 };
 
 /* Рабочее допущение: разные буквы обозначают разные цифры.
    В методичке это отдельно не уточнено. Значение 0 разрешает совпадения.
@@ -32,6 +34,23 @@ typedef struct {
     int index_of_letter[LETTER_LIMIT];
     int letter_count;
 } Equation;
+
+/* Оптимизация 3: постоянная схема сложения готовится один раз.
+   В разряде храним индексы значений, а не позиции символов в строке.
+   Индексы 0..25 относятся к буквам, 26..35 к фиксированным цифрам.
+   Все индексы и количество слагаемых разряда помещаются в unsigned char. */
+typedef struct {
+    unsigned char addend_index[TERM_LIMIT - 1];
+    unsigned char addend_count;
+    unsigned char result_index;
+} SumColumn;
+
+typedef struct {
+    SumColumn columns[TEXT_LIMIT];
+    size_t width;
+    int leading_index[TERM_LIMIT];
+    int leading_count;
+} SumPlan;
 
 typedef struct {
     unsigned long long nodes;
@@ -116,49 +135,73 @@ static int read_digit(const Equation* eq, const int digits[], size_t at)
     return digits[eq->index_of_letter[id]];
 }
 
-/* Оптимизация 2: проверяем сумму по разрядам справа налево.
-   На входе по-прежнему ПОЛНОЕ назначение цифр всем буквам.
-   При первом несовпадении разряда отвергаем вариант: старшие цифры
-   уже не могут изменить младшие. Массив для накопления суммы не нужен. */
-static int check_assignment(const Equation* eq, const int digits[])
+/* Переводим символ в индекс таблицы значений только при подготовке. */
+static int value_index(const Equation* eq, size_t at)
+{
+    int id = letter_id(eq->text[at]);
+    return id >= 0 ? eq->index_of_letter[id]
+        : LETTER_LIMIT + (eq->text[at] - '0');
+}
+
+/* Вход уже разобран prepare_equation: слова непустые, символы допустимы.
+   До начала перебора вычисляем ширину, состав каждого разряда и список
+   первых символов многозначных чисел. Готовый план не зависит от цифр букв. */
+static void prepare_sum_plan(const Equation* eq, SumPlan* plan)
 {
     const Term* right = &eq->terms[eq->term_count - 1];
-    size_t width = 0;
-    int carry = 0;
-
-    /* Дополнительная проверка ведущих нулей остаётся, в том числе
-       для уже записанных цифр. Определяем число проверяемых разрядов. */
+    plan->width = 0;
+    plan->leading_count = 0;
     for (int t = 0; t < eq->term_count; ++t) {
         const Term* word = &eq->terms[t];
-        if (word->length > 1 && read_digit(eq, digits, word->begin) == 0)
-            return 0;
-        if (word->length > width)
-            width = word->length;
+        if (word->length > plan->width)
+            plan->width = word->length;
+        if (word->length > 1)
+            plan->leading_index[plan->leading_count++] = value_index(eq, word->begin);
     }
 
-    /* column == 0 соответствует единицам; отсутствующая цифра равна 0. */
-    for (size_t column = 0; column < width; ++column) {
-        int column_sum = carry;
-        int expected = 0;
+    for (size_t column = 0; column < plan->width; ++column) {
+        SumColumn* prepared = &plan->columns[column];
+        prepared->addend_count = 0;
         for (int t = 0; t < eq->term_count - 1; ++t) {
             const Term* word = &eq->terms[t];
             if (column < word->length) {
                 size_t at = word->begin + word->length - 1 - column;
-                column_sum += read_digit(eq, digits, at);
+                prepared->addend_index[prepared->addend_count++] =
+                    (unsigned char)value_index(eq, at);
             }
         }
+        /* Если разряда справа нет, сравниваем с фиксированным нулём. */
+        prepared->result_index = LETTER_LIMIT;
         if (column < right->length) {
             size_t at = right->begin + right->length - 1 - column;
-            expected = read_digit(eq, digits, at);
+            prepared->result_index = (unsigned char)value_index(eq, at);
         }
-        if (column_sum % 10 != expected)
+    }
+}
+
+/* Сохраняем оптимизацию 2: проверяем ПОЛНОЕ назначение по разрядам
+   и выходим при первом несовпадении. Теперь используем готовую схему:
+   не пересчитываем позиции символов, длины и индексы букв на каждом варианте. */
+static int check_assignment(const SumPlan* plan, const int digits[])
+{
+    int carry = 0;
+    /* Дополнительный контроль ведущих нулей, включая фиксированные цифры. */
+    for (int t = 0; t < plan->leading_count; ++t) {
+        if (digits[plan->leading_index[t]] == 0)
+            return 0;
+    }
+
+    for (size_t column = 0; column < plan->width; ++column) {
+        const SumColumn* prepared = &plan->columns[column];
+        int column_sum = carry;
+        for (int t = 0; t < prepared->addend_count; ++t)
+            column_sum += digits[prepared->addend_index[t]];
+        if (column_sum % 10 != digits[prepared->result_index])
             return 0;
         carry = column_sum / 10;
     }
-
-    /* Ненулевой перенос после последнего разряда означает лишнюю цифру.
-       При семи слагаемых перенос может быть от 0 до 6, а не только 0 или 1.
-       column_sum не превышает 69 независимо от длины входных чисел. */
+    /* При семи слагаемых column_sum <= 69, перенос от 0 до 6.
+       Ненулевой перенос после последнего разряда означает лишнюю цифру. */
     return carry == 0;
 }
 
@@ -169,29 +212,32 @@ static int check_assignment(const Equation* eq, const int digits[])
 static int enumerate_assignments(const Equation* eq, int digits[],
     SearchStats* stats)
 {
+    SumPlan plan;
     int occupied[10] = { 0 };
     int next_digit[LETTER_LIMIT] = { 0 };
     int nonzero[LETTER_LIMIT] = { 0 };
     int depth = 0;
 
-    /* Оптимизация 1: заранее отмечаем первые буквы многозначных чисел.
-       Им нельзя назначать 0; для однозначных чисел запрета нет.
-       Проверяем и слагаемые, и правую часть равенства. */
-    for (int t = 0; t < eq->term_count; ++t) {
-        const Term* word = &eq->terms[t];
-        int id = letter_id(eq->text[word->begin]);
-        if (word->length > 1 && id >= 0)
-            nonzero[eq->index_of_letter[id]] = 1;
+    prepare_sum_plan(eq, &plan);
+    /* Сохраняем оптимизацию 1. Берём первые символы из готового плана;
+       фиксированные цифры не являются переменными поиска. */
+    for (int t = 0; t < plan.leading_count; ++t) {
+        int index = plan.leading_index[t];
+        if (index < LETTER_LIMIT)
+            nonzero[index] = 1;
     }
 
     for (int i = 0; i < LETTER_LIMIT; ++i)
         digits[i] = -1;
+    /* Эти ячейки никогда не меняются во время перебора букв. */
+    for (int digit = 0; digit < 10; ++digit)
+        digits[LETTER_LIMIT + digit] = digit;
     stats->nodes = 1;  /* Корень поиска: ещё ни одной назначенной буквы. */
 
     while (depth >= 0) {
         if (depth == eq->letter_count) {
             ++stats->complete_assignments;
-            if (check_assignment(eq, digits))
+            if (check_assignment(&plan, digits))
                 return 1;
             --depth;
         }
@@ -247,7 +293,7 @@ char* solve_rebus(const char* input, char* output, size_t capacity,
     SearchStats* stats)
 {
     Equation eq;
-    int digits[LETTER_LIMIT];
+    int digits[VALUE_LIMIT];
     SearchStats counters = { 0, 0 };
     int ready;
 
@@ -329,7 +375,7 @@ int main(int argc, char* argv[])
     int solved = 0;
     int total = (int)(sizeof(examples) / sizeof(examples[0]));
 
-    puts("RebusSolver: optimization 2, column-wise sum check");
+    puts("RebusSolver: optimization 3, precomputed column plan");
     printf("UNIQUE_DIGITS = %d\n\n", UNIQUE_DIGITS);
     if (argc == 2)
         return show_case(argv[1]) ? 0 : 1;

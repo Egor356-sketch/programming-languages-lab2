@@ -53,6 +53,9 @@ typedef struct {
 } SumPlan;
 
 typedef struct {
+    /* Узлы: корень + назначения очередной буквы, включая вынужденные.
+       Полные подстановки: назначения всем буквам, переданные в check_assignment.
+       Порядок поиска отличается от версий 0..3; первый ответ может измениться. */
     unsigned long long nodes;
     unsigned long long complete_assignments;
 } SearchStats;
@@ -205,74 +208,134 @@ static int check_assignment(const SumPlan* plan, const int digits[])
     return carry == 0;
 }
 
-/* Перебор с возвратом без рекурсивных вызовов.
-   depth: какой букве сейчас назначается цифра.
-   next_digit[depth]: с какой цифры продолжить после неудачного варианта.
-   Занятую цифру пропускаем только при UNIQUE_DIGITS == 1. */
+/* Оптимизация 4: назначаем цифры по ходу сложения, начиная с единиц.
+   Неправильный разряд отсекает ветвь до назначения остальных букв.
+   Все изменяемые данные одного поиска находятся в этом контексте. */
+typedef struct {
+    const SumPlan* plan;
+    int* digits;
+    int letter_count;
+    int occupied[10];
+    int nonzero[LETTER_LIMIT];
+    SearchStats* stats;
+} ColumnSearch;
+
+/* column: текущий разряд; term: следующее слагаемое в этом разряде;
+   subtotal: перенос из младшего разряда плюс уже учтённые цифры;
+   assigned: количество букв, которым сейчас назначены цифры.
+   Рекурсивный вызов делаем только при назначении НОВОЙ буквы.
+   Известные цифры и готовые разряды обрабатываем циклами.
+   Поэтому глубина рекурсии ограничена количеством разных букв + 1,
+   а не длиной входных чисел. */
+static int search_columns(ColumnSearch* search, size_t column, int term,
+    int subtotal, int assigned)
+{
+    ++search->stats->nodes;
+
+    /* Полную подстановку считаем один раз и независимо проверяем целиком.
+       Проверка из оптимизаций 2 и 3 остаётся контрольной проверкой ответа. */
+    if (assigned == search->letter_count) {
+        ++search->stats->complete_assignments;
+        return check_assignment(search->plan, search->digits);
+    }
+
+    while (column < search->plan->width) {
+        const SumColumn* prepared = &search->plan->columns[column];
+        while (term < prepared->addend_count) {
+            int index = prepared->addend_index[term];
+            int digit = search->digits[index];
+            if (digit >= 0) {
+                subtotal += digit;
+                ++term;
+                continue;
+            }
+
+            /* Буква слагаемого ещё неизвестна: пробуем допустимые цифры.
+               Повторные вхождения этой буквы используют то же назначение. */
+            for (int candidate = search->nonzero[index] ? 1 : 0;
+                candidate < 10; ++candidate) {
+                if (UNIQUE_DIGITS && search->occupied[candidate])
+                    continue;
+                search->digits[index] = candidate;
+                if (UNIQUE_DIGITS)
+                    search->occupied[candidate] = 1;
+
+                if (search_columns(search, column, term + 1,
+                    subtotal + candidate, assigned + 1))
+                    return 1;
+
+                /* Ветвь не подошла: освобождаем назначение этой буквы. */
+                if (UNIQUE_DIGITS)
+                    search->occupied[candidate] = 0;
+                search->digits[index] = -1;
+            }
+            return 0;
+        }
+
+        /* Все слагаемые текущего разряда известны. Цифра результата
+           однозначно задаётся остатком от деления суммы на 10. */
+        int result_index = prepared->result_index;
+        int required = subtotal % 10;
+        int actual = search->digits[result_index];
+        if (actual >= 0) {
+            if (actual != required)
+                return 0;
+            subtotal /= 10;  /* Перенос в следующий разряд, от 0 до 6. */
+            ++column;
+            term = 0;
+            continue;
+        }
+
+        /* Для новой буквы результата не перебираем все десять цифр:
+           допустима только required. Ведущий ноль и занятую цифру
+           отбрасываем так же, как для букв слагаемых. */
+        if ((required == 0 && search->nonzero[result_index]) ||
+            (UNIQUE_DIGITS && search->occupied[required]))
+            return 0;
+        search->digits[result_index] = required;
+        if (UNIQUE_DIGITS)
+            search->occupied[required] = 1;
+
+        if (search_columns(search, column + 1, 0, subtotal / 10, assigned + 1))
+            return 1;
+
+        if (UNIQUE_DIGITS)
+            search->occupied[required] = 0;
+        search->digits[result_index] = -1;
+        return 0;
+    }
+
+    /* Каждая буква есть хотя бы в одном разряде. Успех возможен только
+       после полного назначения и контрольной проверки в начале функции. */
+    return 0;
+}
+
 static int enumerate_assignments(const Equation* eq, int digits[],
     SearchStats* stats)
 {
     SumPlan plan;
-    int occupied[10] = { 0 };
-    int next_digit[LETTER_LIMIT] = { 0 };
-    int nonzero[LETTER_LIMIT] = { 0 };
-    int depth = 0;
+    ColumnSearch search = { 0 };
 
     prepare_sum_plan(eq, &plan);
-    /* Сохраняем оптимизацию 1. Берём первые символы из готового плана;
-       фиксированные цифры не являются переменными поиска. */
+    search.plan = &plan;
+    search.digits = digits;
+    search.letter_count = eq->letter_count;
+    search.stats = stats;
+    for (int i = 0; i < LETTER_LIMIT; ++i)
+        digits[i] = -1;
+    for (int digit = 0; digit < 10; ++digit)
+        digits[LETTER_LIMIT + digit] = digit;
+
+    /* Сохраняем ранний запрет ведущих нулей из оптимизации 1.
+       Фиксированный ведущий ноль недопустим при любой подстановке. */
     for (int t = 0; t < plan.leading_count; ++t) {
         int index = plan.leading_index[t];
         if (index < LETTER_LIMIT)
-            nonzero[index] = 1;
+            search.nonzero[index] = 1;
+        else if (digits[index] == 0)
+            return 0;
     }
-
-    for (int i = 0; i < LETTER_LIMIT; ++i)
-        digits[i] = -1;
-    /* Эти ячейки никогда не меняются во время перебора букв. */
-    for (int digit = 0; digit < 10; ++digit)
-        digits[LETTER_LIMIT + digit] = digit;
-    stats->nodes = 1;  /* Корень поиска: ещё ни одной назначенной буквы. */
-
-    while (depth >= 0) {
-        if (depth == eq->letter_count) {
-            ++stats->complete_assignments;
-            if (check_assignment(&plan, digits))
-                return 1;
-            --depth;
-        }
-        else {
-            int candidate = next_digit[depth];
-            /* Отсекаем ведущий ноль до перебора остальных букв. */
-            if (candidate == 0 && nonzero[depth])
-                candidate = 1;
-            while (candidate < 10 && UNIQUE_DIGITS && occupied[candidate])
-                ++candidate;
-
-            if (candidate < 10) {
-                digits[depth] = candidate;
-                next_digit[depth] = candidate + 1;
-                if (UNIQUE_DIGITS)
-                    occupied[candidate] = 1;
-                ++stats->nodes;
-                ++depth;
-                if (depth < eq->letter_count)
-                    next_digit[depth] = 0;
-                continue;
-            }
-            /* Цифры для текущей буквы закончились: возвращаемся назад. */
-            next_digit[depth] = 0;
-            --depth;
-        }
-
-        /* Отменяем назначение предыдущей буквы, чтобы попробовать следующее. */
-        if (depth >= 0) {
-            if (UNIQUE_DIGITS)
-                occupied[digits[depth]] = 0;
-            digits[depth] = -1;
-        }
-    }
-    return 0;
+    return search_columns(&search, 0, 0, 0, 0);
 }
 
 static void write_answer(const Equation* eq, const int digits[], char* output)
@@ -375,7 +438,7 @@ int main(int argc, char* argv[])
     int solved = 0;
     int total = (int)(sizeof(examples) / sizeof(examples[0]));
 
-    puts("RebusSolver: optimization 3, precomputed column plan");
+    puts("RebusSolver: optimization 4, column-guided search with carries");
     printf("UNIQUE_DIGITS = %d\n\n", UNIQUE_DIGITS);
     if (argc == 2)
         return show_case(argv[1]) ? 0 : 1;

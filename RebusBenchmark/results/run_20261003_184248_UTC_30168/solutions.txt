@@ -1,0 +1,150 @@
+baseline T1
+Input: BE + BE = MOO
+Solution: 72 + 72 = 144
+Nodes: 4247
+Complete assignments: 3650
+
+opt1 T1
+Input: BE + BE = MOO
+Solution: 72 + 72 = 144
+Nodes: 3261
+Complete assignments: 2796
+
+opt2 T1
+Input: BE + BE = MOO
+Solution: 72 + 72 = 144
+Nodes: 3261
+Complete assignments: 2796
+
+opt3 T1
+Input: BE + BE = MOO
+Solution: 72 + 72 = 144
+Nodes: 3261
+Complete assignments: 2796
+
+opt4 T1
+Input: BE + BE = MOO
+Solution: 72 + 72 = 144
+Nodes: 19
+Complete assignments: 1
+
+baseline T2
+Input: SEND + MORE = MONEY
+Solution: 9567 + 1085 = 10652
+Nodes: 2511447
+Complete assignments: 1748230
+
+opt1 T2
+Input: SEND + MORE = MONEY
+Solution: 9567 + 1085 = 10652
+Nodes: 2002687
+Complete assignments: 1393690
+
+opt2 T2
+Input: SEND + MORE = MONEY
+Solution: 9567 + 1085 = 10652
+Nodes: 2002687
+Complete assignments: 1393690
+
+opt3 T2
+Input: SEND + MORE = MONEY
+Solution: 9567 + 1085 = 10652
+Nodes: 2002687
+Complete assignments: 1393690
+
+opt4 T2
+Input: SEND + MORE = MONEY
+Solution: 9567 + 1085 = 10652
+Nodes: 5248
+Complete assignments: 1078
+
+baseline T3
+Input: BIG + CAT = LION
+Solution: 204 + 859 = 1063
+Nodes: 1271154
+Complete assignments: 739779
+
+opt1 T3
+Input: BIG + CAT = LION
+Solution: 204 + 859 = 1063
+Nodes: 511152
+Complete assignments: 296259
+
+opt2 T3
+Input: BIG + CAT = LION
+Solution: 204 + 859 = 1063
+Nodes: 511152
+Complete assignments: 296259
+
+opt3 T3
+Input: BIG + CAT = LION
+Solution: 204 + 859 = 1063
+Nodes: 511152
+Complete assignments: 296259
+
+opt4 T3
+Input: BIG + CAT = LION
+Solution: 762 + 843 = 1605
+Nodes: 2550
+Complete assignments: 1
+
+baseline T4
+Input: ELEVEN + NINE + FIVE + FIVE = THIRTY
+Solution: 797275 + 5057 + 4027 + 4027 = 810386
+Nodes: 7817095
+Complete assignments: 2875747
+
+opt1 T4
+Input: ELEVEN + NINE + FIVE + FIVE = THIRTY
+Solution: 797275 + 5057 + 4027 + 4027 = 810386
+Nodes: 4577571
+Complete assignments: 1677667
+
+opt2 T4
+Input: ELEVEN + NINE + FIVE + FIVE = THIRTY
+Solution: 797275 + 5057 + 4027 + 4027 = 810386
+Nodes: 4577571
+Complete assignments: 1677667
+
+opt3 T4
+Input: ELEVEN + NINE + FIVE + FIVE = THIRTY
+Solution: 797275 + 5057 + 4027 + 4027 = 810386
+Nodes: 4577571
+Complete assignments: 1677667
+
+opt4 T4
+Input: ELEVEN + NINE + FIVE + FIVE = THIRTY
+Solution: 797275 + 5057 + 4027 + 4027 = 810386
+Nodes: 2114
+Complete assignments: 10
+
+baseline T5
+Input: A + A + A + A + A + A + A = B
+Solution: 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
+Nodes: 19
+Complete assignments: 16
+
+opt1 T5
+Input: A + A + A + A + A + A + A = B
+Solution: 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
+Nodes: 19
+Complete assignments: 16
+
+opt2 T5
+Input: A + A + A + A + A + A + A = B
+Solution: 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
+Nodes: 19
+Complete assignments: 16
+
+opt3 T5
+Input: A + A + A + A + A + A + A = B
+Solution: 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
+Nodes: 19
+Complete assignments: 16
+
+opt4 T5
+Input: A + A + A + A + A + A + A = B
+Solution: 1 + 1 + 1 + 1 + 1 + 1 + 1 = 7
+Nodes: 4
+Complete assignments: 1
+

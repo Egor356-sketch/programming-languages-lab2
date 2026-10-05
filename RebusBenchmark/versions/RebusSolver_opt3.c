@@ -6,9 +6,7 @@
 #include <windows.h>
 #endif
 
-/* Формат: латинские A..Z, цифры 0..9; сложение 2..7 слагаемых
-   или одно вычитание X - Y = Z. Все числа неотрицательные целые.
-   Смешанные операции, цепочки вычитаний и отрицательные числа не принимаются.
+/* Ограничения реализации: латинские A..Z, цифры 0..9, сложение.
    Длина входа не больше 511 байт, включая пробелы, но без '\0'. */
 enum { TEXT_LIMIT = 512, TERM_LIMIT = 8, LETTER_LIMIT = 26 };
 /* Первые ячейки содержат значения букв, последние десять: константы 0..9. */
@@ -22,7 +20,7 @@ enum { VALUE_LIMIT = LETTER_LIMIT + 10 };
 #define UNIQUE_DIGITS 1
 #endif
 
-   /* Вместо копий слов сохраняем их положение в исходной строке. */
+/* Вместо копий слов сохраняем их положение в исходной строке. */
 typedef struct {
     size_t begin;
     size_t length;
@@ -55,9 +53,6 @@ typedef struct {
 } SumPlan;
 
 typedef struct {
-    /* Узлы: корень + назначения очередной буквы, включая вынужденные.
-       Полные подстановки: назначения всем буквам, переданные в check_assignment.
-       Порядок поиска отличается от версий 0..3; первый ответ может измениться. */
     unsigned long long nodes;
     unsigned long long complete_assignments;
 } SearchStats;
@@ -72,14 +67,14 @@ static int number_symbol(char ch)
     return letter_id(ch) >= 0 || (ch >= '0' && ch <= '9');
 }
 
-static void skip_spaces(const char* text, size_t* at)
+static void skip_spaces(const char *text, size_t *at)
 {
     while (isspace((unsigned char)text[*at]))
         ++*at;
 }
 
 /* Читаем одно слово-число и регистрируем впервые встретившиеся буквы. */
-static int read_term(Equation* eq, size_t* at)
+static int read_term(Equation *eq, size_t *at)
 {
     size_t begin;
     skip_spaces(eq->text, at);
@@ -101,11 +96,8 @@ static int read_term(Equation* eq, size_t* at)
     return 1;
 }
 
-/* Сложение читаем в прежнем порядке: 2..7 слагаемых и правая часть.
-   Для X - Y = Z готовим эквивалентное равенство Y + Z = X.
-   Меняется только порядок участков в terms; текст и индексы букв сохраняются,
-   поэтому write_answer возвращает исходную запись со знаком минус. */
-static int prepare_equation(const char* input, Equation* eq)
+/* Сначала читаем 2..7 слагаемых, затем единственную правую часть. */
+static int prepare_equation(const char *input, Equation *eq)
 {
     size_t at = 0;
     memset(eq, 0, sizeof(*eq));
@@ -123,26 +115,6 @@ static int prepare_equation(const char* input, Equation* eq)
             return 0;
         if (eq->text[at] == '=')
             break;
-        if (eq->text[at] == '-') {
-            Term minuend;
-            /* Вычитание допускает ровно два операнда: X - Y = Z. */
-            if (eq->term_count != 1)
-                return 0;
-            ++at;
-            if (!read_term(eq, &at) || eq->text[at] != '=')
-                return 0;
-            ++at;
-            if (!read_term(eq, &at) || eq->text[at] != '\0')
-                return 0;
-
-            /* [X, Y, Z] -> [Y, Z, X]. Саму строку не переписываем.
-               Схема разрядов и поиск из четвёртой версии работают без изменений. */
-            minuend = eq->terms[0];
-            eq->terms[0] = eq->terms[1];
-            eq->terms[1] = eq->terms[2];
-            eq->terms[2] = minuend;
-            return !UNIQUE_DIGITS || eq->letter_count <= 10;
-        }
         if (eq->text[at] != '+' || eq->term_count == TERM_LIMIT - 1)
             return 0;
         ++at;
@@ -155,7 +127,7 @@ static int prepare_equation(const char* input, Equation* eq)
     return !UNIQUE_DIGITS || eq->letter_count <= 10;
 }
 
-static int read_digit(const Equation* eq, const int digits[], size_t at)
+static int read_digit(const Equation *eq, const int digits[], size_t at)
 {
     int id = letter_id(eq->text[at]);
     if (id < 0)
@@ -164,7 +136,7 @@ static int read_digit(const Equation* eq, const int digits[], size_t at)
 }
 
 /* Переводим символ в индекс таблицы значений только при подготовке. */
-static int value_index(const Equation* eq, size_t at)
+static int value_index(const Equation *eq, size_t at)
 {
     int id = letter_id(eq->text[at]);
     return id >= 0 ? eq->index_of_letter[id]
@@ -174,13 +146,13 @@ static int value_index(const Equation* eq, size_t at)
 /* Вход уже разобран prepare_equation: слова непустые, символы допустимы.
    До начала перебора вычисляем ширину, состав каждого разряда и список
    первых символов многозначных чисел. Готовый план не зависит от цифр букв. */
-static void prepare_sum_plan(const Equation* eq, SumPlan* plan)
+static void prepare_sum_plan(const Equation *eq, SumPlan *plan)
 {
-    const Term* right = &eq->terms[eq->term_count - 1];
+    const Term *right = &eq->terms[eq->term_count - 1];
     plan->width = 0;
     plan->leading_count = 0;
     for (int t = 0; t < eq->term_count; ++t) {
-        const Term* word = &eq->terms[t];
+        const Term *word = &eq->terms[t];
         if (word->length > plan->width)
             plan->width = word->length;
         if (word->length > 1)
@@ -188,10 +160,10 @@ static void prepare_sum_plan(const Equation* eq, SumPlan* plan)
     }
 
     for (size_t column = 0; column < plan->width; ++column) {
-        SumColumn* prepared = &plan->columns[column];
+        SumColumn *prepared = &plan->columns[column];
         prepared->addend_count = 0;
         for (int t = 0; t < eq->term_count - 1; ++t) {
-            const Term* word = &eq->terms[t];
+            const Term *word = &eq->terms[t];
             if (column < word->length) {
                 size_t at = word->begin + word->length - 1 - column;
                 prepared->addend_index[prepared->addend_count++] =
@@ -210,7 +182,7 @@ static void prepare_sum_plan(const Equation* eq, SumPlan* plan)
 /* Сохраняем оптимизацию 2: проверяем ПОЛНОЕ назначение по разрядам
    и выходим при первом несовпадении. Теперь используем готовую схему:
    не пересчитываем позиции символов, длины и индексы букв на каждом варианте. */
-static int check_assignment(const SumPlan* plan, const int digits[])
+static int check_assignment(const SumPlan *plan, const int digits[])
 {
     int carry = 0;
     /* Дополнительный контроль ведущих нулей, включая фиксированные цифры. */
@@ -220,7 +192,7 @@ static int check_assignment(const SumPlan* plan, const int digits[])
     }
 
     for (size_t column = 0; column < plan->width; ++column) {
-        const SumColumn* prepared = &plan->columns[column];
+        const SumColumn *prepared = &plan->columns[column];
         int column_sum = carry;
         for (int t = 0; t < prepared->addend_count; ++t)
             column_sum += digits[prepared->addend_index[t]];
@@ -233,137 +205,77 @@ static int check_assignment(const SumPlan* plan, const int digits[])
     return carry == 0;
 }
 
-/* Оптимизация 4: назначаем цифры по ходу сложения, начиная с единиц.
-   Неправильный разряд отсекает ветвь до назначения остальных букв.
-   Все изменяемые данные одного поиска находятся в этом контексте. */
-typedef struct {
-    const SumPlan* plan;
-    int* digits;
-    int letter_count;
-    int occupied[10];
-    int nonzero[LETTER_LIMIT];
-    SearchStats* stats;
-} ColumnSearch;
-
-/* column: текущий разряд; term: следующее слагаемое в этом разряде;
-   subtotal: перенос из младшего разряда плюс уже учтённые цифры;
-   assigned: количество букв, которым сейчас назначены цифры.
-   Рекурсивный вызов делаем только при назначении НОВОЙ буквы.
-   Известные цифры и готовые разряды обрабатываем циклами.
-   Поэтому глубина рекурсии ограничена количеством разных букв + 1,
-   а не длиной входных чисел. */
-static int search_columns(ColumnSearch* search, size_t column, int term,
-    int subtotal, int assigned)
-{
-    ++search->stats->nodes;
-
-    /* Полную подстановку считаем один раз и независимо проверяем целиком.
-       Проверка из оптимизаций 2 и 3 остаётся контрольной проверкой ответа. */
-    if (assigned == search->letter_count) {
-        ++search->stats->complete_assignments;
-        return check_assignment(search->plan, search->digits);
-    }
-
-    while (column < search->plan->width) {
-        const SumColumn* prepared = &search->plan->columns[column];
-        while (term < prepared->addend_count) {
-            int index = prepared->addend_index[term];
-            int digit = search->digits[index];
-            if (digit >= 0) {
-                subtotal += digit;
-                ++term;
-                continue;
-            }
-
-            /* Буква слагаемого ещё неизвестна: пробуем допустимые цифры.
-               Повторные вхождения этой буквы используют то же назначение. */
-            for (int candidate = search->nonzero[index] ? 1 : 0;
-                candidate < 10; ++candidate) {
-                if (UNIQUE_DIGITS && search->occupied[candidate])
-                    continue;
-                search->digits[index] = candidate;
-                if (UNIQUE_DIGITS)
-                    search->occupied[candidate] = 1;
-
-                if (search_columns(search, column, term + 1,
-                    subtotal + candidate, assigned + 1))
-                    return 1;
-
-                /* Ветвь не подошла: освобождаем назначение этой буквы. */
-                if (UNIQUE_DIGITS)
-                    search->occupied[candidate] = 0;
-                search->digits[index] = -1;
-            }
-            return 0;
-        }
-
-        /* Все слагаемые текущего разряда известны. Цифра результата
-           однозначно задаётся остатком от деления суммы на 10. */
-        int result_index = prepared->result_index;
-        int required = subtotal % 10;
-        int actual = search->digits[result_index];
-        if (actual >= 0) {
-            if (actual != required)
-                return 0;
-            subtotal /= 10;  /* Перенос в следующий разряд, от 0 до 6. */
-            ++column;
-            term = 0;
-            continue;
-        }
-
-        /* Для новой буквы результата не перебираем все десять цифр:
-           допустима только required. Ведущий ноль и занятую цифру
-           отбрасываем так же, как для букв слагаемых. */
-        if ((required == 0 && search->nonzero[result_index]) ||
-            (UNIQUE_DIGITS && search->occupied[required]))
-            return 0;
-        search->digits[result_index] = required;
-        if (UNIQUE_DIGITS)
-            search->occupied[required] = 1;
-
-        if (search_columns(search, column + 1, 0, subtotal / 10, assigned + 1))
-            return 1;
-
-        if (UNIQUE_DIGITS)
-            search->occupied[required] = 0;
-        search->digits[result_index] = -1;
-        return 0;
-    }
-
-    /* Каждая буква есть хотя бы в одном разряде. Успех возможен только
-       после полного назначения и контрольной проверки в начале функции. */
-    return 0;
-}
-
-static int enumerate_assignments(const Equation* eq, int digits[],
-    SearchStats* stats)
+/* Перебор с возвратом без рекурсивных вызовов.
+   depth: какой букве сейчас назначается цифра.
+   next_digit[depth]: с какой цифры продолжить после неудачного варианта.
+   Занятую цифру пропускаем только при UNIQUE_DIGITS == 1. */
+static int enumerate_assignments(const Equation *eq, int digits[],
+    SearchStats *stats)
 {
     SumPlan plan;
-    ColumnSearch search = { 0 };
+    int occupied[10] = { 0 };
+    int next_digit[LETTER_LIMIT] = { 0 };
+    int nonzero[LETTER_LIMIT] = { 0 };
+    int depth = 0;
 
     prepare_sum_plan(eq, &plan);
-    search.plan = &plan;
-    search.digits = digits;
-    search.letter_count = eq->letter_count;
-    search.stats = stats;
-    for (int i = 0; i < LETTER_LIMIT; ++i)
-        digits[i] = -1;
-    for (int digit = 0; digit < 10; ++digit)
-        digits[LETTER_LIMIT + digit] = digit;
-
-    /* Сохраняем ранний запрет ведущих нулей из оптимизации 1.
-       Фиксированный ведущий ноль недопустим при любой подстановке. */
+    /* Сохраняем оптимизацию 1. Берём первые символы из готового плана;
+       фиксированные цифры не являются переменными поиска. */
     for (int t = 0; t < plan.leading_count; ++t) {
         int index = plan.leading_index[t];
         if (index < LETTER_LIMIT)
-            search.nonzero[index] = 1;
-        else if (digits[index] == 0)
-            return 0;
+            nonzero[index] = 1;
     }
-    return search_columns(&search, 0, 0, 0, 0);
+
+    for (int i = 0; i < LETTER_LIMIT; ++i)
+        digits[i] = -1;
+    /* Эти ячейки никогда не меняются во время перебора букв. */
+    for (int digit = 0; digit < 10; ++digit)
+        digits[LETTER_LIMIT + digit] = digit;
+    stats->nodes = 1;  /* Корень поиска: ещё ни одной назначенной буквы. */
+
+    while (depth >= 0) {
+        if (depth == eq->letter_count) {
+            ++stats->complete_assignments;
+            if (check_assignment(&plan, digits))
+                return 1;
+            --depth;
+        }
+        else {
+            int candidate = next_digit[depth];
+            /* Отсекаем ведущий ноль до перебора остальных букв. */
+            if (candidate == 0 && nonzero[depth])
+                candidate = 1;
+            while (candidate < 10 && UNIQUE_DIGITS && occupied[candidate])
+                ++candidate;
+
+            if (candidate < 10) {
+                digits[depth] = candidate;
+                next_digit[depth] = candidate + 1;
+                if (UNIQUE_DIGITS)
+                    occupied[candidate] = 1;
+                ++stats->nodes;
+                ++depth;
+                if (depth < eq->letter_count)
+                    next_digit[depth] = 0;
+                continue;
+            }
+            /* Цифры для текущей буквы закончились: возвращаемся назад. */
+            next_digit[depth] = 0;
+            --depth;
+        }
+
+        /* Отменяем назначение предыдущей буквы, чтобы попробовать следующее. */
+        if (depth >= 0) {
+            if (UNIQUE_DIGITS)
+                occupied[digits[depth]] = 0;
+            digits[depth] = -1;
+        }
+    }
+    return 0;
 }
 
-static void write_answer(const Equation* eq, const int digits[], char* output)
+static void write_answer(const Equation *eq, const int digits[], char *output)
 {
     memcpy(output, eq->text, eq->length + 1);
     for (size_t at = 0; at < eq->length; ++at) {
@@ -377,8 +289,8 @@ static void write_answer(const Equation* eq, const int digits[], char* output)
    input и output могут указывать на один буфер. stats может быть NULL.
    При ошибке входа/буфера либо отсутствии решения результат пустой,
    если output != NULL и capacity > 0. */
-char* solve_rebus(const char* input, char* output, size_t capacity,
-    SearchStats* stats)
+char *solve_rebus(const char *input, char *output, size_t capacity,
+    SearchStats *stats)
 {
     Equation eq;
     int digits[VALUE_LIMIT];
@@ -408,11 +320,11 @@ char* solve_rebus(const char* input, char* output, size_t capacity,
 #ifndef REBUS_LIBRARY
 /* Режим проверки: печать выполняется вне измеряемого участка.
    Одиночный замер нужен для пробного запуска, а не итогового сравнения. */
-static int show_case(const char* input)
+static int show_case(const char *input)
 {
     char answer[TEXT_LIMIT];
     SearchStats counters;
-    char* result;
+    char *result;
 #ifdef _WIN32
     LARGE_INTEGER frequency = { 0 }, start = { 0 }, stop = { 0 };
     int have_timer = QueryPerformanceFrequency(&frequency)
@@ -451,25 +363,19 @@ static int show_case(const char* input)
     return result != NULL;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
-    const char* examples[] = {
+    const char *examples[] = {
         "BE + BE = MOO",
         "SEND + MORE = MONEY",
         "BIG + CAT = LION",
         "ELEVEN + NINE + FIVE + FIVE = THIRTY",
-        "A + A + A + A + A + A + A = B",
-        /* Новые входные примеры, а не заранее записанные числовые ответы. */
-        "MONEY - MORE = SEND",
-        "MOO - BE = BE",
-        "FOUR - TWO = TWO",
-        "AB - AB = C",
-        "1000 - 1 = AAA"
+        "A + A + A + A + A + A + A = B"
     };
     int solved = 0;
     int total = (int)(sizeof(examples) / sizeof(examples[0]));
 
-    puts("RebusSolver: addition and subtraction (based on optimization 4)");
+    puts("RebusSolver: optimization 3, precomputed column plan");
     printf("UNIQUE_DIGITS = %d\n\n", UNIQUE_DIGITS);
     if (argc == 2)
         return show_case(argv[1]) ? 0 : 1;
